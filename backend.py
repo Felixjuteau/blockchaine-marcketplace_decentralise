@@ -1,8 +1,49 @@
 import json
+import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
 
 from marcketplace import MockBlockchain, MockMarketplaceContract, ACCOUNTS, eth_to_wei, RevertError
+
+# --- Real Ethereum mode (Sepolia) configuration via environment variables ---
+# Set REAL_ETH=true to enable. Required vars when REAL_ETH=true:
+# - ETH_PROVIDER: HTTP provider URL (Infura/Alchemy Sepolia endpoint)
+# - CONTRACT_ADDRESS: deployed contract address
+# - CONTRACT_ABI_PATH: path to contract ABI JSON file
+# Optional:
+# - PRIVATE_KEY: hex private key to send transactions (required for POST endpoints)
+REAL_ETH = os.environ.get("REAL_ETH", "false").lower() in ("1", "true", "yes")
+WEB3 = None
+CONTRACT = None
+WEB3_ACCOUNT = None
+CONTRACT_ADDRESS = os.environ.get("CONTRACT_ADDRESS")
+CONTRACT_ABI_PATH = os.environ.get("CONTRACT_ABI_PATH")
+ETH_PROVIDER = os.environ.get("ETH_PROVIDER")
+PRIVATE_KEY = os.environ.get("PRIVATE_KEY")
+
+if REAL_ETH:
+    try:
+        from web3 import Web3
+        WEB3 = Web3(Web3.HTTPProvider(ETH_PROVIDER))
+        if not WEB3.isConnected():
+            print("WARNING: web3 provider not connected. Check ETH_PROVIDER.")
+            WEB3 = None
+        else:
+            if CONTRACT_ABI_PATH and CONTRACT_ADDRESS:
+                try:
+                    with open(CONTRACT_ABI_PATH, "r", encoding="utf-8") as f:
+                        abi = json.load(f)
+                    CONTRACT = WEB3.eth.contract(address=Web3.to_checksum_address(CONTRACT_ADDRESS), abi=abi)
+                except Exception as e:
+                    print("Failed to load contract ABI or address:", e)
+                    CONTRACT = None
+            if PRIVATE_KEY:
+                acct = WEB3.eth.account.from_key(PRIVATE_KEY)
+                WEB3_ACCOUNT = acct.address
+                print("WEB3 account:", WEB3_ACCOUNT)
+    except Exception as e:
+        print("Failed to import web3 or initialize real mode:", e)
+        REAL_ETH = False
 
 HOST = "127.0.0.1"
 PORT = 5000
@@ -61,10 +102,57 @@ def serialize_event(evt):
 
 
 def build_items():
+    # If real mode enabled and contract configured, try to read from chain
+    if REAL_ETH and WEB3 and CONTRACT:
+        try:
+            # Prefer totalItems + getItem for compatibility
+            total = CONTRACT.functions.totalItems().call()
+            items = []
+            for i in range(1, total + 1):
+                try:
+                    raw = CONTRACT.functions.getItem(i).call()
+                except Exception:
+                    continue
+                # raw may be tuple or dict depending on ABI/solidity struct; try to map
+                if isinstance(raw, dict):
+                    it = {
+                        "id": int(raw.get("id") or raw.get(0)),
+                        "name": raw.get("name") or raw.get(1),
+                        "description": raw.get("description") or raw.get(2),
+                        "price": str(raw.get("price") or raw.get(3)),
+                        "owner": raw.get("owner") or raw.get(4),
+                        "actif": bool(raw.get("actif") if raw.get("actif") is not None else True),
+                    }
+                else:
+                    try:
+                        it = {
+                            "id": int(raw[0]),
+                            "name": raw[1],
+                            "description": raw[2],
+                            "price": str(raw[3]),
+                            "owner": raw[4],
+                            "actif": bool(raw[5]) if len(raw) > 5 else True,
+                        }
+                    except Exception:
+                        it = {"raw": str(raw)}
+                items.append(it)
+            return items
+        except Exception as e:
+            print("Error reading items from chain:", e)
+            # fallback to mock
     return [serialize_item(contract.get_item(item_id)) for item_id in contract._item_ids]
 
 
 def build_accounts():
+    if REAL_ETH and WEB3:
+        out = []
+        for name, address in ACCOUNTS.items():
+            try:
+                bal = WEB3.eth.get_balance(Web3.to_checksum_address(address)) if WEB3 else None
+            except Exception:
+                bal = None
+            out.append({"name": name, "address": address, "balance": str(bal) if bal is not None else "0"})
+        return out
     return [
         {
             "name": name,

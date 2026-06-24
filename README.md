@@ -98,3 +98,29 @@ L’interface React permet de :
 - utiliser FastAPI ou Flask pour un backend plus robuste,
 - déployer le frontend et le backend séparément.
 
+## Mode Réseau réel (Sepolia)
+
+Tu peux basculer le `backend.py` en mode réel pour interagir avec un contrat déployé sur Sepolia.
+
+Pré-requis :
+
+- Avoir un endpoint Sepolia (Infura, Alchemy, etc.). Exemple : `https://sepolia.infura.io/v3/<API_KEY>`
+- Avoir déployé le smart contract `Marketplace` sur Sepolia et récupérer son adresse et l'ABI JSON.
+- (Optionnel pour écrire) Avoir une clé privée test (seulement sur Sepolia) et des ETH de test.
+
+Variables d'environnement à définir avant de lancer le backend :
+
+```bash
+export REAL_ETH=true
+export ETH_PROVIDER="https://sepolia.infura.io/v3/<API_KEY>"
+export CONTRACT_ADDRESS="0x..."    # adresse du contrat déployé
+export CONTRACT_ABI_PATH="/chemin/vers/MarketplaceABI.json"
+# (optionnel) pour envoyer des transactions
+export PRIVATE_KEY="0x..."
+```
+
+Notes :
+
+- Le backend tentera de lire les annonces via les fonctions `totalItems()` et `getItem(id)` du contrat. L'ABI doit exposer ces fonctions.
+- Les endpoints POST (création, achat, mise à jour de prix) nécessitent `PRIVATE_KEY` si tu veux que le backend signe/émette les transactions.
+- Pour développer, commence par des lectures (GET) puis active l'envoi de tx une fois que tout est vérifié.
